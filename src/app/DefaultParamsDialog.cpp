@@ -45,12 +45,14 @@ DefaultParamsDialog::DefaultParamsDialog(QWidget* parent)
   fillingColorBox->addItem(tr("White"), FILL_WHITE);
   fillingColorBox->addItem(tr("Black"), FILL_BLACK);
 
-  thresholdMethodBox->addItem(tr("Otsu"), OTSU);
-  thresholdMethodBox->addItem(tr("Sauvola"), SAUVOLA);
-  thresholdMethodBox->addItem(tr("Wolf"), WOLF);
-  thresholdMethodBox->addItem(tr("EdgePlus"), EDGEPLUS);
-  thresholdMethodBox->addItem(tr("BlurDiv"), BLURDIV);
-  thresholdMethodBox->addItem(tr("EdgeDiv"), EDGEDIV);
+  thresholdMethodBox->addItem(tr("Otsu"), T_OTSU);
+  thresholdMethodBox->addItem(tr("Sauvola"), T_SAUVOLA);
+  thresholdMethodBox->addItem(tr("Wolf"), T_WOLF);
+  thresholdMethodBox->addItem(tr("Bradley"), T_BRADLEY);
+  thresholdMethodBox->addItem(tr("Grad"), T_GRAD);
+  thresholdMethodBox->addItem(tr("EdgePlus"), T_EDGEPLUS);
+  thresholdMethodBox->addItem(tr("BlurDiv"), T_BLURDIV);
+  thresholdMethodBox->addItem(tr("EdgeDiv"), T_EDGEDIV);
 
   pictureShapeSelector->addItem(tr("Off"), OFF_SHAPE);
   pictureShapeSelector->addItem(tr("Free"), FREE_SHAPE);
@@ -600,8 +602,9 @@ std::unique_ptr<DefaultParams> DefaultParamsDialog::buildParams() const {
 
   DefaultParams::DeskewParams deskewParams(angleSpinBox->value(), deskewAutoBtn->isChecked() ? MODE_AUTO : MODE_MANUAL);
 
-  const AutoManualMode pageBoxMode
-      = pageDetectDisableBtn->isChecked() ? MODE_DISABLED : pageDetectManualBtn->isChecked() ? MODE_MANUAL : MODE_AUTO;
+  const AutoManualMode pageBoxMode = pageDetectDisableBtn->isChecked()  ? MODE_DISABLED
+                                     : pageDetectManualBtn->isChecked() ? MODE_MANUAL
+                                                                        : MODE_AUTO;
   DefaultParams::SelectContentParams selectContentParams(QSizeF(widthSpinBox->value(), heightSpinBox->value()),
                                                          !contentDetectDisableBtn->isChecked(), pageBoxMode,
                                                          fineTuneBtn->isChecked());
@@ -665,10 +668,10 @@ std::unique_ptr<DefaultParams> DefaultParamsDialog::buildParams() const {
   blackWhiteOptions.setBinarizationMethod(binarizationMethod);
   blackWhiteOptions.setThresholdAdjustment(thresholdSlider->value());
   blackWhiteOptions.setSauvolaCoef(sauvolaCoef->value());
-  if (binarizationMethod == SAUVOLA || binarizationMethod == EDGEPLUS || binarizationMethod == BLURDIV
-      || binarizationMethod == EDGEDIV) {
+  if (binarizationMethod == T_SAUVOLA || binarizationMethod == T_BRADLEY || binarizationMethod == T_EDGEPLUS
+      || binarizationMethod == T_BLURDIV || binarizationMethod == T_EDGEDIV) {
     blackWhiteOptions.setWindowSize(sauvolaWindowSize->value());
-  } else if (binarizationMethod == WOLF) {
+  } else if (binarizationMethod == T_WOLF || binarizationMethod == T_GRAD) {
     blackWhiteOptions.setWindowSize(wolfWindowSize->value());
   }
   blackWhiteOptions.setWolfCoef(wolfCoef->value());

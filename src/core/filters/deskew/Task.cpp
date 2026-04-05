@@ -17,7 +17,10 @@
 #include <imageproc/Grayscale.h>
 #include <imageproc/OrthogonalRotation.h>
 #include <imageproc/PolygonRasterizer.h>
+#include <imageproc/Transform.h>
 
+#include <QPolygonF>
+#include <QTransform>
 #include <utility>
 
 #include "DebugImagesImpl.h"
@@ -26,6 +29,7 @@
 #include "FilterData.h"
 #include "FilterUiInterface.h"
 #include "ImageView.h"
+#include "ObliqueFinder.h"
 #include "OptionsWidget.h"
 #include "TaskStatus.h"
 #include "filters/select_content/Task.h"
@@ -96,9 +100,10 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
       params.reset();
     } else {
       uiData.setEffectiveDeskewAngle(params->deskewAngle());
+      uiData.setEffectiveObliqueAngle(params->obliqueAngle());
       uiData.setMode(params->mode());
 
-      Params newParams(uiData.effectiveDeskewAngle(), deps, uiData.mode());
+      Params newParams(uiData.effectiveDeskewAngle(), uiData.effectiveObliqueAngle(), deps, uiData.mode());
       m_settings->setPageParams(m_pageId, newParams);
     }
   }
@@ -128,7 +133,8 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
 
       SkewFinder skewFinder;
       skewFinder.setResolutionRatio((double) rotatedDpm.horizontal() / rotatedDpm.vertical());
-      const Skew skew(skewFinder.findSkew(rotatedImage));
+      const Skew skew(m_settings->algoContentBased() ? skewFinder.findSkew(rotatedImage)
+                                                     : skewFinder.findSkewFromTopEdge(rotatedImage));
 
       if (skew.confidence() >= Skew::GOOD_CONFIDENCE) {
         uiData.setEffectiveDeskewAngle(-skew.angle());
@@ -137,7 +143,38 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
       }
       uiData.setMode(MODE_AUTO);
 
-      Params newParams(uiData.effectiveDeskewAngle(), deps, uiData.mode());
+      // Find oblique on the deskewed (horizontal) mask for better accuracy (PR #110 feedback).
+      BinaryImage horizontalMask;
+      const double deskewAngleDeg = uiData.effectiveDeskewAngle();
+      if (std::abs(deskewAngleDeg) < 1e-6) {
+        horizontalMask = rotatedImage;
+      } else {
+        const int w = rotatedImage.width();
+        const int h = rotatedImage.height();
+        QTransform rotXform;
+        const QPointF center(0.5 * w, 0.5 * h);
+        rotXform.translate(-center.x(), -center.y());
+        rotXform.rotate(deskewAngleDeg);
+        rotXform.translate(center.x(), center.y());
+        const QRectF srcRectF(0, 0, w, h);
+        QPolygonF dstCorners;
+        dstCorners << rotXform.map(srcRectF.topLeft()) << rotXform.map(srcRectF.topRight())
+                   << rotXform.map(srcRectF.bottomRight()) << rotXform.map(srcRectF.bottomLeft());
+        const QRect dstRect = dstCorners.boundingRect().toAlignedRect();
+        if (dstRect.isValid()) {
+          const QImage srcQ = rotatedImage.toQImage();
+          const QImage dstQ = transform(srcQ, rotXform, dstRect, OutsidePixels::assumeWeakColor(Qt::white));
+          horizontalMask = BinaryImage(dstQ);
+        } else {
+          horizontalMask = rotatedImage;
+        }
+      }
+      const std::optional<double> obliqueDeg = findObliqueDegrees(horizontalMask, skewFinder, 5.0);
+      if (obliqueDeg) {
+        uiData.setEffectiveObliqueAngle(-*obliqueDeg);
+      }
+
+      Params newParams(uiData.effectiveDeskewAngle(), uiData.effectiveObliqueAngle(), deps, uiData.mode());
       m_settings->setPageParams(m_pageId, newParams);
 
       status.throwIfCancelled();
@@ -146,6 +183,7 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
 
   ImageTransformation newXform(data.xform());
   newXform.setPostRotation(uiData.effectiveDeskewAngle());
+  newXform.setPostOblique(uiData.effectiveObliqueAngle());
 
   if (m_nextTask) {
     return m_nextTask->process(status, FilterData(data, newXform));
@@ -260,5 +298,9 @@ void Task::UiUpdater::updateUI(FilterUiInterface* ui) {
 
   QObject::connect(view, SIGNAL(manualDeskewAngleSet(double)), optWidget, SLOT(manualDeskewAngleSetExternally(double)));
   QObject::connect(optWidget, SIGNAL(manualDeskewAngleSet(double)), view, SLOT(manualDeskewAngleSetExternally(double)));
+  QObject::connect(view, SIGNAL(manualObliqueAngleSet(double)), optWidget,
+                   SLOT(manualObliqueAngleSetExternally(double)));
+  QObject::connect(optWidget, SIGNAL(manualObliqueAngleSet(double)), view,
+                   SLOT(manualObliqueAngleSetExternally(double)));
 }
 }  // namespace deskew
